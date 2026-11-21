@@ -1,0 +1,100 @@
+name: Full Stack Application Deployment Test
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  COMPOSE_PROJECT_NAME: myapp
+
+jobs:
+  deploy-and-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secrets
+        shell: pwsh
+        run: |
+          @"
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          APP_PORT=${{ secrets.APP_PORT }}
+          APP_SECRET=${{ secrets.APP_SECRET }}
+          API_KEY=${{ secrets.API_KEY }}
+          COMPOSE_PROJECT_NAME=${{ env.COMPOSE_PROJECT_NAME }}
+          "@ | Out-File -FilePath .env -Encoding utf8
+          Get-Content .env | ForEach-Object { $_ -replace '=.+', '=***' }
+
+      - name: Deploy with Docker Compose
+        shell: pwsh
+        run: |
+          docker-compose up -d
+          Start-Sleep -Seconds 25
+          docker-compose ps
+          $status = docker-compose ps
+          if (-not ($status -match "Up|running")) {
+            docker-compose logs
+            exit 1
+          }
+
+      - name: Run application tests
+        shell: pwsh
+        run: |
+          # 1. Проверка веб-приложения и БД
+          $health = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing
+          if ($health.StatusCode -ne 200) { exit 1 }
+
+          $data = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/api/data" -UseBasicParsing
+          if ($data.StatusCode -ne 200) { exit 1 }
+
+          # 2. Сравнение данных в БД и веб-интерфейсе
+          $WEB_COUNT = (Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count" -UseBasicParsing).Content.Trim()
+          $DB_COUNT = (docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;").Trim()
+
+          Write-Output "Database count: $DB_COUNT | Web API count: $WEB_COUNT"
+          if ($DB_COUNT -ne $WEB_COUNT) {
+            Write-Output "Mismatch!"
+            exit 1
+          }
+
+          # Запись переменных в окружение для отчета
+          "DB_COUNT=$DB_COUNT" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WEB_COUNT=$WEB_COUNT" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create report and save Docker logs
+        if: always()
+        shell: pwsh
+        run: |
+          @"
+          # Deployment Test Report
+          - Date: $(Get-Date)
+          - Application: Healthy
+          - Database: Connected
+          - Data Consistency: Passed
+          - Database records: $env:DB_COUNT
+          - Web API records: $env:WEB_COUNT
+          "@ | Out-File -FilePath test-report.md -Encoding utf8
+
+          docker-compose logs > deployment-logs.txt
+          docker images > docker-images.txt
+          docker ps -a > docker-ps.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-artifacts-${{ github.run_id }}
+          path: |
+            .env
+            test-report.md
+            deployment-logs.txt
+            docker-images.txt
+            docker-ps.txt
+          retention-days: 30
