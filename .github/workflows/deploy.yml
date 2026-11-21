@@ -50,24 +50,19 @@ jobs:
           # 1. Проверка веб-приложения и БД
           $health = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing
           if ($health.StatusCode -ne 200) { exit 1 }
-
           $data = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/api/data" -UseBasicParsing
           if ($data.StatusCode -ne 200) { exit 1 }
-
           # 2. Сравнение данных в БД и веб-интерфейсе
           $WEB_COUNT = (Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count" -UseBasicParsing).Content.Trim()
-          $DB_COUNT = (docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;").Trim()
-
+          $DB_COUNT = (docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -A -c "SELECT COUNT(*) FROM items;").Trim()
           Write-Output "Database count: $DB_COUNT | Web API count: $WEB_COUNT"
           if ($DB_COUNT -ne $WEB_COUNT) {
             Write-Output "Mismatch!"
             exit 1
           }
-
           # Запись переменных в окружение для отчета
           "DB_COUNT=$DB_COUNT" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WEB_COUNT=$WEB_COUNT" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Create report and save Docker logs
         if: always()
         shell: powershell
