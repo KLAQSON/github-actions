@@ -86,6 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deployment-artifacts-${{ github.run_id }}
+          include-hidden-files: true
           path: |
             .env
             test-report.md
