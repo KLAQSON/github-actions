@@ -36,7 +36,7 @@ jobs:
         shell: powershell
         run: |
           docker-compose up -d
-          Start-Sleep -Seconds 25
+          Start-Sleep -Seconds 45
           docker-compose ps
           $status = docker-compose ps
           if (-not ($status -match "Up|running")) {
